@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(bun x shadcn-svelte@latest add:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
