@@ -45,8 +45,9 @@ Known issues:
 - Missing keyboard shortcuts
 - Missing multi-selection
 - Uses Imperial units internally
-- No ability to save state between sessions
-- No ability to save session as a file
+- No session persistence
 - Zoom percentage does not consider monitor DPI, thus the zoom % is rather arbitary.
 - SVG exports contain the solid white page background
 - No context menus
+- Shape builder tool does not live-update available contours
+- Shape builder tool frequently produces many small holes

@@ -8,6 +8,7 @@
 	import { PAGE_SIZES } from '$lib/page-sizes';
 	import { exportToPDF, exportToSVG, downloadBlob, downloadSVG } from '$lib/export';
 	import { removeBackground } from '$lib/background-removal';
+	import { serializeProject, deserializeProject, exportProjectFile, importProjectFile, validateProject } from '$lib/project';
 
 	let selectedSheet: PageSize = $state('us-letter');
 	let canvasScale = $state(0.5);
@@ -172,6 +173,45 @@
 		selectedSheet = newSize;
 	}
 
+	// Project save/load functions
+	async function handleSaveProject() {
+		try {
+			const canvasState = {
+				zoom: currentViewportScale,
+				selectedLayerId
+			};
+			
+			const project = serializeProject(layers, selectedSheet, canvasState);
+			exportProjectFile(project);
+		} catch (error) {
+			console.error('Failed to save project:', error);
+			// TODO: Show error message to user
+		}
+	}
+
+	async function handleLoadProject() {
+		try {
+			const project = await importProjectFile();
+			
+			if (!validateProject(project)) {
+				throw new Error('Invalid project file format');
+			}
+			
+			const { layers: newLayers, pageSize, canvasState, metadata } = await deserializeProject(project);
+			
+			// Update application state
+			layers = newLayers;
+			selectedSheet = pageSize;
+			selectedLayerId = canvasState.selectedLayerId;
+			// Note: We don't restore zoom level to avoid jarring user experience
+			
+			console.log(`Loaded project: ${metadata.name}`);
+		} catch (error) {
+			console.error('Failed to load project:', error);
+			// TODO: Show error message to user
+		}
+	}
+
 	// Registration marks creation
 	function addRegistrationMarks() {
 		const pageInfo = PAGE_SIZES[selectedSheet];
@@ -298,10 +338,10 @@
 								Export Vector (SVG)
 							</Menubar.Item>
 							<Menubar.Separator />
-							<Menubar.Item disabled>
+							<Menubar.Item onclick={handleLoadProject}>
 								Import Project...
 							</Menubar.Item>
-							<Menubar.Item disabled>
+							<Menubar.Item onclick={handleSaveProject}>
 								Save Project As...
 							</Menubar.Item>
 						</Menubar.Content>

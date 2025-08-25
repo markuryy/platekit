@@ -61,3 +61,44 @@ export interface PageSizeInfo {
 	height: number; // in points (72 DPI)
 	displaySize: string;
 }
+
+// Project serialization types
+export interface SerializableLayer {
+	id: string;
+	name: string;
+	type: 'print' | 'cut';
+	visible: boolean;
+	imageData?: string; // Base64 encoded image data
+	vectorPaths?: VectorPath[];
+	traceParameters?: TraceParameters;
+	offset?: number;
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+	rotation: number;
+	scaleX: number;
+	scaleY: number;
+	opacity: number;
+	zIndex: number;
+}
+
+export interface ProjectMetadata {
+	name: string;
+	version: string;
+	created: string; // ISO date string
+	modified: string; // ISO date string
+	pageSize: PageSize;
+}
+
+export interface CanvasState {
+	zoom: number;
+	selectedLayerId: string | null;
+}
+
+export interface PlateKitProject {
+	version: string;
+	metadata: ProjectMetadata;
+	layers: SerializableLayer[];
+	canvasState: CanvasState;
+}
