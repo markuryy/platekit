@@ -151,7 +151,7 @@
 	}
 
 	function drawSheet() {
-		if (!context) return;
+		if (!context || !canvasElement) return;
 
 		// Clear entire canvas
 		context.clearRect(0, 0, canvasElement.width, canvasElement.height);
@@ -307,7 +307,7 @@
 		});
 
 		// Draw drag over indication
-		if (isDragOver) {
+		if (isDragOver && context) {
 			context.strokeStyle = '#3b82f6';
 			context.lineWidth = 3;
 			context.setLineDash([10, 5]);
@@ -331,7 +331,7 @@
 				
 				// Draw highlighted contours using the same coordinate system
 				pathsToRender.forEach((contour, index) => {
-					if (highlightedContours.has(index)) {
+					if (highlightedContours.has(index) && context) {
 						context.fillStyle = 'rgba(16, 185, 129, 0.3)';
 						context.strokeStyle = '#10b981';
 						context.lineWidth = 3;
@@ -359,7 +359,7 @@
 		}
 
 		// Draw shape building path
-		if (shapeBuildPath.length > 1) {
+		if (shapeBuildPath.length > 1 && context) {
 			context.strokeStyle = '#10b981';
 			context.lineWidth = 3;
 			context.lineCap = 'round';
