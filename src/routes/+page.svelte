@@ -7,6 +7,7 @@
 	import { createCutLayerFromPrint } from '$lib/tracing';
 	import { PAGE_SIZES } from '$lib/page-sizes';
 	import { exportToPDF, exportToSVG, downloadBlob, downloadSVG } from '$lib/export';
+	import { removeBackground } from '$lib/background-removal';
 
 	let selectedSheet: PageSize = $state('us-letter');
 	let canvasScale = $state(0.5);
@@ -105,6 +106,19 @@
 			selectedLayerId = cutLayer.id;
 		} catch (error) {
 			console.error('Failed to generate outline:', error);
+			// TODO: Show error message to user
+		}
+	}
+
+	async function handleRemoveBackground(layerId: string) {
+		const layer = layers.find(l => l.id === layerId);
+		if (!layer || layer.type !== 'print' || !layer.image) return;
+		
+		try {
+			const processedImage = await removeBackground(layer.image);
+			handleLayerUpdate(layerId, { image: processedImage });
+		} catch (error) {
+			console.error('Failed to remove background:', error);
 			// TODO: Show error message to user
 		}
 	}
@@ -460,14 +474,24 @@
 								<div class="space-y-4">
 									<div>
 										<h3 class="text-sm font-medium mb-2">Print Layer Actions</h3>
-										<Button 
-											variant="outline" 
-											size="sm"
-											class="w-full"
-											onclick={() => selectedLayerId && generateOutline(selectedLayerId)}
-										>
-											Generate Outline
-										</Button>
+										<div class="space-y-2">
+											<Button 
+												variant="outline" 
+												size="sm"
+												class="w-full"
+												onclick={() => selectedLayerId && handleRemoveBackground(selectedLayerId)}
+											>
+												Remove Background
+											</Button>
+											<Button 
+												variant="outline" 
+												size="sm"
+												class="w-full"
+												onclick={() => selectedLayerId && generateOutline(selectedLayerId)}
+											>
+												Generate Outline
+											</Button>
+										</div>
 									</div>
 								</div>
 							{:else if selectedLayer.type === 'cut'}

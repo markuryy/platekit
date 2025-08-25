@@ -39,8 +39,10 @@
 	},
 	"type": "module",
 	"dependencies": {
+		"@huggingface/transformers": "3.0.0-alpha.9",
 		"@techstark/opencv-js": "^4.11.0-release.1",
 		"@types/jspdf": "^2.0.0",
+		"detect-gpu": "^5.0.45",
 		"jspdf": "^3.0.1",
 		"paper": "^0.12.18"
 	}
