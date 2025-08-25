@@ -5,7 +5,7 @@
 		"@eslint/compat": "^1.2.5",
 		"@eslint/js": "^9.18.0",
 		"@internationalized/date": "^3.8.1",
-		"@lucide/svelte": "^0.541.0",
+		"@lucide/svelte": "^0.515.0",
 		"@sveltejs/adapter-auto": "^6.0.0",
 		"@sveltejs/kit": "^2.22.0",
 		"@sveltejs/vite-plugin-svelte": "^6.0.0",
@@ -40,6 +40,8 @@
 	"type": "module",
 	"dependencies": {
 		"@techstark/opencv-js": "^4.11.0-release.1",
+		"@types/jspdf": "^2.0.0",
+		"jspdf": "^3.0.1",
 		"paper": "^0.12.18"
 	}
 }

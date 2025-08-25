@@ -5,7 +5,7 @@
 	import { unite } from '$lib/pathfinder';
 
 	interface CanvasProps {
-		sheetSize?: 'us-letter' | 'a5';
+		sheetSize?: 'us-letter' | 'a4' | 'a5';
 		scale?: number;
 		layers?: Layer[];
 		selectedLayerIds?: string[];
@@ -70,7 +70,8 @@
 	// Sheet dimensions in points (72 DPI)
 	const SHEET_DIMENSIONS = {
 		'us-letter': { width: 612, height: 792 }, // 8.5" x 11"
-		'a5': { width: 420, height: 595 } // A5 dimensions
+		'a4': { width: 595, height: 842 }, // 8.27" x 11.69"
+		'a5': { width: 420, height: 595 } // 5.83" x 8.27"
 	};
 
 	const sheetDimensions = $derived(SHEET_DIMENSIONS[sheetSize]);

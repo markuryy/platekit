@@ -52,3 +52,12 @@ export interface SelectionState {
 	transformType: 'move' | 'resize' | 'rotate' | null;
 	transformHandle: string | null;
 }
+
+export type PageSize = 'us-letter' | 'a4' | 'a5';
+
+export interface PageSizeInfo {
+	name: string;
+	width: number; // in points (72 DPI)
+	height: number; // in points (72 DPI)
+	displaySize: string;
+}

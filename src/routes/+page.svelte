@@ -1,11 +1,14 @@
 <script lang="ts">
 	import Canvas from '$lib/components/Canvas.svelte';
-	import type { Layer } from '$lib/types';
+	import type { Layer, PageSize } from '$lib/types';
 	import { Button } from '$lib/components/ui/button';
 	import { Separator } from '$lib/components/ui/separator';
+	import * as Menubar from '$lib/components/ui/menubar';
 	import { createCutLayerFromPrint } from '$lib/tracing';
+	import { PAGE_SIZES } from '$lib/page-sizes';
+	import { exportToPDF, exportToSVG, downloadBlob, downloadSVG } from '$lib/export';
 
-	let selectedSheet: 'us-letter' | 'a5' = $state('us-letter');
+	let selectedSheet: PageSize = $state('us-letter');
 	let canvasScale = $state(0.5);
 	let currentViewportScale = $state(0.5);
 	let layers = $state<Layer[]>([]);
@@ -121,6 +124,40 @@
 		}
 	}
 
+	// Export functions
+	async function handleExportRaster() {
+		try {
+			const pdfBlob = await exportToPDF({
+				pageSize: selectedSheet,
+				layers,
+				dpi: 300
+			});
+			
+			downloadBlob(pdfBlob, `platekit-${selectedSheet}-${Date.now()}.pdf`);
+		} catch (error) {
+			console.error('Failed to export raster:', error);
+			// TODO: Show error message to user
+		}
+	}
+
+	function handleExportVector() {
+		try {
+			const svg = exportToSVG({
+				pageSize: selectedSheet,
+				layers
+			});
+			
+			downloadSVG(svg, `platekit-${selectedSheet}-${Date.now()}.svg`);
+		} catch (error) {
+			console.error('Failed to export vector:', error);
+			// TODO: Show error message to user
+		}
+	}
+
+	function handlePageSizeChange(newSize: PageSize) {
+		selectedSheet = newSize;
+	}
+
 
 
 </script>
@@ -129,34 +166,52 @@
 	<!-- Top Toolbar -->
 	<header class="border-b bg-background px-4 py-2">
 		<div class="flex items-center justify-between">
-			<div class="flex items-center gap-6">
+			<div class="flex items-center gap-4">
 				<h1 class="text-lg font-semibold">PlateKit</h1>
 				
 				<Separator orientation="vertical" class="h-6" />
 				
-				<!-- Sheet Size Controls -->
-				<div class="flex items-center gap-2">
-					<span class="text-sm font-medium">Sheet:</span>
-					<Button 
-						variant={selectedSheet === 'us-letter' ? 'default' : 'outline'}
-						size="sm"
-						onclick={() => selectedSheet = 'us-letter'}
-					>
-						Letter
-					</Button>
-					<Button 
-						variant={selectedSheet === 'a5' ? 'default' : 'outline'}
-						size="sm"
-						onclick={() => selectedSheet = 'a5'}
-					>
-						A5
-					</Button>
-				</div>
-
+				<Menubar.Root>
+					<Menubar.Menu>
+						<Menubar.Trigger>File</Menubar.Trigger>
+						<Menubar.Content>
+							<Menubar.Item onclick={handleExportRaster}>
+								Export Raster (PDF)
+							</Menubar.Item>
+							<Menubar.Item onclick={handleExportVector}>
+								Export Vector (SVG)
+							</Menubar.Item>
+							<Menubar.Separator />
+							<Menubar.Item disabled>
+								Import Project...
+							</Menubar.Item>
+							<Menubar.Item disabled>
+								Save Project As...
+							</Menubar.Item>
+						</Menubar.Content>
+					</Menubar.Menu>
+					
+					<Menubar.Menu>
+						<Menubar.Trigger>Page Size</Menubar.Trigger>
+						<Menubar.Content>
+							{#each Object.entries(PAGE_SIZES) as [key, info]}
+								<Menubar.Item onclick={() => handlePageSizeChange(key as PageSize)}>
+									<div class="flex items-center justify-between w-full">
+										<span>{info.name}</span>
+										<span class="text-xs text-muted-foreground ml-4">{info.displaySize}</span>
+										{#if selectedSheet === key}
+											<span class="ml-2">✓</span>
+										{/if}
+									</div>
+								</Menubar.Item>
+							{/each}
+						</Menubar.Content>
+					</Menubar.Menu>
+				</Menubar.Root>
 			</div>
 
 			<div class="flex items-center gap-2">
-				<Button variant="outline" size="sm">Export</Button>
+				<!-- Space for future toolbar items -->
 			</div>
 		</div>
 	</header>
@@ -368,7 +423,7 @@
 	<footer class="border-t bg-muted/30 px-4 py-1">
 		<div class="flex items-center justify-between text-xs text-muted-foreground">
 			<span>
-				{selectedSheet === 'us-letter' ? 'US Letter (8.5" × 11")' : 'A5'} 
+				{PAGE_SIZES[selectedSheet].name} ({PAGE_SIZES[selectedSheet].displaySize}) 
 				• Zoom: {Math.round(currentViewportScale * 100)}%
 			</span>
 			<span>Ready</span>
