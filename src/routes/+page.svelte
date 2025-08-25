@@ -1,6 +1,6 @@
 <script lang="ts">
 	import Canvas from '$lib/components/Canvas.svelte';
-	import type { Layer, PageSize } from '$lib/types';
+	import type { Layer, PageSize, VectorPath } from '$lib/types';
 	import { Button } from '$lib/components/ui/button';
 	import { Separator } from '$lib/components/ui/separator';
 	import * as Menubar from '$lib/components/ui/menubar';
@@ -158,6 +158,108 @@
 		selectedSheet = newSize;
 	}
 
+	// Registration marks creation
+	function addRegistrationMarks() {
+		const pageInfo = PAGE_SIZES[selectedSheet];
+		const markSizeInMm = 5;
+		const markSizeInPoints = (markSizeInMm / 25.4) * 72; // Convert mm to points (72 DPI)
+		
+		// Get highest z-index to put registration marks on top
+		const maxZIndex = layers.length > 0 ? Math.max(...layers.map(l => l.zIndex)) : 0;
+		
+		// Create vector paths for the registration marks (black squares)
+		const topLeftSquare: VectorPath = {
+			id: crypto.randomUUID(),
+			closed: true,
+			points: [
+				{ x: 0, y: 0 },
+				{ x: markSizeInPoints, y: 0 },
+				{ x: markSizeInPoints, y: markSizeInPoints },
+				{ x: 0, y: markSizeInPoints }
+			]
+		};
+
+		const bottomRightSquare: VectorPath = {
+			id: crypto.randomUUID(),
+			closed: true,
+			points: [
+				{ x: pageInfo.width - markSizeInPoints, y: pageInfo.height - markSizeInPoints },
+				{ x: pageInfo.width, y: pageInfo.height - markSizeInPoints },
+				{ x: pageInfo.width, y: pageInfo.height },
+				{ x: pageInfo.width - markSizeInPoints, y: pageInfo.height }
+			]
+		};
+
+		// Create vector (cut) layer
+		const vectorLayer: Layer = {
+			id: crypto.randomUUID(),
+			name: 'Registration Marks (Vector)',
+			type: 'cut',
+			visible: true,
+			vectorPaths: [topLeftSquare, bottomRightSquare],
+			x: 0,
+			y: 0,
+			width: pageInfo.width,
+			height: pageInfo.height,
+			rotation: 0,
+			scaleX: 1,
+			scaleY: 1,
+			opacity: 1,
+			zIndex: maxZIndex + 2,
+			offset: 0
+		};
+
+		// Create a canvas for the raster version
+		const canvas = document.createElement('canvas');
+		canvas.width = pageInfo.width;
+		canvas.height = pageInfo.height;
+		const ctx = canvas.getContext('2d')!;
+		
+		// Fill with transparent background
+		ctx.clearRect(0, 0, canvas.width, canvas.height);
+		
+		// Draw black squares
+		ctx.fillStyle = '#000000';
+		
+		// Top left square (exact corner)
+		ctx.fillRect(0, 0, markSizeInPoints, markSizeInPoints);
+		
+		// Bottom right square (exact corner)
+		ctx.fillRect(
+			pageInfo.width - markSizeInPoints, 
+			pageInfo.height - markSizeInPoints, 
+			markSizeInPoints, 
+			markSizeInPoints
+		);
+
+		// Convert canvas to image
+		const img = new Image();
+		img.onload = () => {
+			// Create raster (print) layer
+			const rasterLayer: Layer = {
+				id: crypto.randomUUID(),
+				name: 'Registration Marks (Print)',
+				type: 'print',
+				visible: true,
+				image: img,
+				x: 0,
+				y: 0,
+				width: pageInfo.width,
+				height: pageInfo.height,
+				rotation: 0,
+				scaleX: 1,
+				scaleY: 1,
+				opacity: 1,
+				zIndex: maxZIndex + 1
+			};
+
+			// Add both layers (vector goes on top)
+			layers = [...layers, rasterLayer, vectorLayer];
+		};
+		
+		img.src = canvas.toDataURL();
+	}
+
 
 
 </script>
@@ -187,6 +289,15 @@
 							</Menubar.Item>
 							<Menubar.Item disabled>
 								Save Project As...
+							</Menubar.Item>
+						</Menubar.Content>
+					</Menubar.Menu>
+					
+					<Menubar.Menu>
+						<Menubar.Trigger>Tools</Menubar.Trigger>
+						<Menubar.Content>
+							<Menubar.Item onclick={addRegistrationMarks}>
+								Add Registration Marks
 							</Menubar.Item>
 						</Menubar.Content>
 					</Menubar.Menu>

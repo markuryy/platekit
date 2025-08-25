@@ -92,9 +92,13 @@ export function exportToSVG(options: ExportOptions): string {
 	const { pageSize, layers } = options;
 	const pageInfo = getPageSizeInfo(pageSize);
 	
+	// Convert points to inches for proper SVG dimensions
+	const widthInInches = pageInfo.width / 72;
+	const heightInInches = pageInfo.height / 72;
+	
 	let svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg"
-     width="${pageInfo.width}pt" height="${pageInfo.height}pt"
+     width="${widthInInches}in" height="${heightInInches}in"
      viewBox="0 0 ${pageInfo.width} ${pageInfo.height}">
   <rect x="0" y="0" width="${pageInfo.width}" height="${pageInfo.height}" fill="white"/>
 `;
@@ -115,10 +119,22 @@ export function exportToSVG(options: ExportOptions): string {
 			if (path.points.length < 2) continue;
 			
 			let pathData = '';
-			const scaledPoints = path.points.map(point => ({
-				x: (point.x / (layer.image?.naturalWidth || 1)) * layer.width,
-				y: (point.y / (layer.image?.naturalHeight || 1)) * layer.height
-			}));
+			let scaledPoints;
+			
+			// Handle vector paths differently based on whether they have an associated image
+			if (layer.image) {
+				// Scale points based on image dimensions (for traced paths)
+				scaledPoints = path.points.map(point => ({
+					x: (point.x / layer.image!.naturalWidth) * layer.width,
+					y: (point.y / layer.image!.naturalHeight) * layer.height
+				}));
+			} else {
+				// Use points directly (for generated paths like registration marks)
+				scaledPoints = path.points.map(point => ({
+					x: point.x,
+					y: point.y
+				}));
+			}
 			
 			if (scaledPoints.length > 0) {
 				pathData = `M ${scaledPoints[0].x} ${scaledPoints[0].y}`;
