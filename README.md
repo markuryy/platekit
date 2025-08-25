@@ -1,50 +1,52 @@
-PlateKit - make sticker sheets with ease in your browser
+# PlateKit
 
-# PlateKit - Vinyl Sticker Layout Tool - Feature Design Sheet
+Vinyl sticker sheet layout tool for the browser.
 
-## Core Features
+## Features
 
-### 1. Canvas & Layout
-- **Fixed-size canvases** (US Letter and A5 presets)
-- **Accurate export scaling** to real physical dimensions
+Drop images onto canvas. Position and scale them. Generate vector cut paths from images. Export to PDF for printing or SVG for vinyl plotters.
 
-### 2. Image Handling
-- **Drag & drop** image import
-- **Drag images around** the canvas (like Microsoft figma)
-- **Remove backgrounds** from images
+### Canvas
+- Fixed page sizes (US Letter, A4, A5)
+- Drag and drop image import
+- Layer management with print/cut layer types
+- Transform tools for positioning and scaling
+- Client-side AI background removal with WebGPU acceleration
 
-### 3. Vector Processing
-- **Extract outer contour vectors** for cutting paths
-- **Generate alignment marks** for printer and plotter registration
+### Vector Processing
+- Image tracing to extract cut contours
+- Offset adjustment for cutting tolerances
+- Shape consolidation for multiple contours
+- Registration marks for alignment
 
-### 4. Export
-- **Print-ready output** with cut paths
-- **Vinyl plotter compatible** files
+### Export
+- PDF export at 300 DPI for printing
+- SVG export with vector paths only for cutting
 
----
+## Usage
 
-*Simple workflow: Drop images → Position → Remove backgrounds → Generate cut paths → Export with alignment marks*
+To run the development server:
 
-sveltekit bun app
-
-to run dev server:
-
-```zsh
+```bash
 bun run dev
 ```
 
-to add shadcn-svelte components:
+To build the project:
 
-```zsh
-bun x shadcn-svelte@latest add button
+```bash
+bun run build
 ```
 
-The command above will add the Button component to your project. You can then import it like this:
+Workflow: Drop images → Remove background → Position → Generate cut paths → Adjust offsets → Add registration marks → Export
 
-```svelte
-<script lang="ts">
- import { Button } from "$lib/components/ui/button/index.js";
-</script>
- 
-<Button>Click me</Button>
-```
+Known issues:
+- Offset tool cannot reliably shrink
+- Remove background has no loading state
+- Missing keyboard shortcuts
+- Missing multi-selection
+- Uses Imperial units internally
+- No ability to save state between sessions
+- No ability to save session as a file
+- Zoom percentage does not consider monitor DPI, thus the zoom % is rather arbitary.
+- SVG exports contain the solid white page background
+- No context menus
