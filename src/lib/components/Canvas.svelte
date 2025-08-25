@@ -221,13 +221,13 @@
 			} else if (layer.type === 'cut' && layer.vectorPaths && layer.image) {
 				// Apply offset if specified and draw vector paths as dashed strokes
 				let pathsToRender = layer.vectorPaths;
-				if (layer.offset && layer.offset > 0) {
+				if (layer.offset && layer.offset !== 0) {
 					// Convert offset from mm to image pixels
 					// At 72 DPI: 1 mm = 72/25.4 ≈ 2.83465 points
 					// Scale to image resolution: points * (imageWidth / layerWidth)
 					const mmToPoints = 72 / 25.4; // Convert mm to points (1mm = ~2.83 points)
 					const imageScale = layer.image.naturalWidth / layer.width; // Scale factor from display to image pixels
-					const offsetInImagePixels = layer.offset * mmToPoints * imageScale;
+					const offsetInImagePixels = layer.offset * mmToPoints * imageScale; // Preserve sign for inward/outward
 					
 					// Apply point reduction before offsetting for cleaner results
 					const reducedPaths = layer.vectorPaths.map(path => 
@@ -320,10 +320,10 @@
 			if (selectedLayer && selectedLayer.type === 'cut' && selectedLayer.vectorPaths) {
 				// Get the same offset paths used for hit detection
 				let pathsToRender = selectedLayer.vectorPaths;
-				if (selectedLayer.offset && selectedLayer.offset > 0) {
+				if (selectedLayer.offset && selectedLayer.offset !== 0) {
 					const mmToPoints = 72 / 25.4;
 					const imageScale = selectedLayer.image?.naturalWidth ? selectedLayer.image.naturalWidth / selectedLayer.width : 1;
-					const offsetInImagePixels = selectedLayer.offset * mmToPoints * imageScale;
+					const offsetInImagePixels = selectedLayer.offset * mmToPoints * imageScale; // Preserve sign
 					
 					pathsToRender = selectedLayer.vectorPaths.map(path => offsetVectorPath(path, offsetInImagePixels));
 				}
@@ -885,11 +885,11 @@
 		
 		// Get the actual paths being rendered (with offset applied if present)
 		let pathsToCheck = layer.vectorPaths;
-		if (layer.offset && layer.offset > 0) {
+		if (layer.offset && layer.offset !== 0) {
 			// Convert offset from mm to image pixels (same as rendering)
 			const mmToPoints = 72 / 25.4;
 			const imageScale = layer.image?.naturalWidth ? layer.image.naturalWidth / layer.width : 1;
-			const offsetInImagePixels = layer.offset * mmToPoints * imageScale;
+			const offsetInImagePixels = layer.offset * mmToPoints * imageScale; // Preserve sign
 			
 			pathsToCheck = layer.vectorPaths.map(path => offsetVectorPath(path, offsetInImagePixels));
 		}
@@ -898,16 +898,135 @@
 		console.log('Layer bounds:', { x: layer.x, y: layer.y, w: layer.width, h: layer.height });
 		console.log('Total contours:', pathsToCheck.length);
 		
-		// Check each contour using the same coordinate system as rendering
+		// Check each contour and its self-intersections
 		pathsToCheck.forEach((contour, index) => {
-			const isInside = pointInRenderedContour({ x: sheetX, y: sheetY }, contour, layer);
-			console.log(`Contour ${index}: ${isInside ? 'HIT' : 'miss'}`);
-			if (isInside) {
+			const hitResults = checkPointInContourAndLoops({ x: sheetX, y: sheetY }, contour, layer);
+			if (hitResults.inMainShape || hitResults.inLoop) {
+				console.log(`Contour ${index}: HIT (main: ${hitResults.inMainShape}, loop: ${hitResults.inLoop})`);
 				highlightedContours.add(index);
+			} else {
+				console.log(`Contour ${index}: miss`);
 			}
 		});
 		
 		console.log('Highlighted contours:', Array.from(highlightedContours));
+	}
+
+	// Enhanced hit detection that considers self-intersecting loops
+	function checkPointInContourAndLoops(point: {x: number, y: number}, contour: VectorPath, layer: Layer): {inMainShape: boolean, inLoop: boolean} {
+		if (contour.points.length < 3) return { inMainShape: false, inLoop: false };
+		
+		// Convert contour points to screen coordinates
+		const renderedPoints = contour.points.map(p => ({
+			x: (p.x / (layer.image?.naturalWidth || 1)) * layer.width + layer.x,
+			y: (p.y / (layer.image?.naturalHeight || 1)) * layer.height + layer.y
+		}));
+		
+		// Check if point is inside the main contour
+		const inMainShape = pointInPolygon(point, renderedPoints);
+		
+		// Check for self-intersections and loops
+		const inLoop = checkPointInSelfIntersectionLoops(point, renderedPoints);
+		
+		return { inMainShape, inLoop };
+	}
+
+	// Ray casting algorithm for polygon containment
+	function pointInPolygon(point: {x: number, y: number}, polygon: {x: number, y: number}[]): boolean {
+		let inside = false;
+		for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+			if (((polygon[i].y > point.y) !== (polygon[j].y > point.y)) &&
+				(point.x < (polygon[j].x - polygon[i].x) * (point.y - polygon[i].y) / (polygon[j].y - polygon[i].y) + polygon[i].x)) {
+				inside = !inside;
+			}
+		}
+		return inside;
+	}
+
+	// Check if point is inside any loops created by self-intersections
+	function checkPointInSelfIntersectionLoops(point: {x: number, y: number}, renderedPoints: {x: number, y: number}[]): boolean {
+		const intersections = findSelfIntersections(renderedPoints);
+		
+		if (intersections.length === 0) return false;
+		
+		// For each intersection, try to trace potential loops
+		for (const intersection of intersections) {
+			if (isPointInIntersectionLoop(point, intersection, renderedPoints)) {
+				return true;
+			}
+		}
+		
+		return false;
+	}
+
+	// Find self-intersections in the path
+	function findSelfIntersections(points: {x: number, y: number}[]): {x: number, y: number, seg1: number, seg2: number}[] {
+		const intersections: {x: number, y: number, seg1: number, seg2: number}[] = [];
+		
+		for (let i = 0; i < points.length - 1; i++) {
+			for (let j = i + 2; j < points.length - 1; j++) {
+				// Don't check adjacent segments or the closing segment
+				if (Math.abs(i - j) <= 1 || (i === 0 && j === points.length - 2)) continue;
+				
+				const intersection = lineSegmentIntersection(
+					points[i], points[i + 1],
+					points[j], points[j + 1]
+				);
+				
+				if (intersection) {
+					intersections.push({ ...intersection, seg1: i, seg2: j });
+				}
+			}
+		}
+		
+		return intersections;
+	}
+
+	// Find intersection between two line segments
+	function lineSegmentIntersection(
+		p1: {x: number, y: number}, p2: {x: number, y: number},
+		p3: {x: number, y: number}, p4: {x: number, y: number}
+	): {x: number, y: number} | null {
+		const denom = (p1.x - p2.x) * (p3.y - p4.y) - (p1.y - p2.y) * (p3.x - p4.x);
+		
+		if (Math.abs(denom) < 1e-10) return null; // Parallel lines
+		
+		const t = ((p1.x - p3.x) * (p3.y - p4.y) - (p1.y - p3.y) * (p3.x - p4.x)) / denom;
+		const u = -((p1.x - p2.x) * (p1.y - p3.y) - (p1.y - p2.y) * (p1.x - p3.x)) / denom;
+		
+		// Check if intersection is within both line segments
+		if (t >= 0 && t <= 1 && u >= 0 && u <= 1) {
+			return {
+				x: p1.x + t * (p2.x - p1.x),
+				y: p1.y + t * (p2.y - p1.y)
+			};
+		}
+		
+		return null;
+	}
+
+	// Check if point is inside a loop formed by self-intersection
+	function isPointInIntersectionLoop(
+		point: {x: number, y: number}, 
+		intersection: {x: number, y: number, seg1: number, seg2: number}, 
+		points: {x: number, y: number}[]
+	): boolean {
+		// Create a sub-path from the intersection point around the loop
+		const loopPoints: {x: number, y: number}[] = [];
+		
+		// Add intersection point
+		loopPoints.push(intersection);
+		
+		// Add points from seg1+1 to seg2
+		for (let i = intersection.seg1 + 1; i <= intersection.seg2; i++) {
+			loopPoints.push(points[i]);
+		}
+		
+		// Close the loop back to intersection
+		loopPoints.push(intersection);
+		
+		// Check if point is inside this loop
+		return pointInPolygon(point, loopPoints);
 	}
 
 	// Check if a point is inside a contour using the same coordinate system as rendering
@@ -947,10 +1066,10 @@
 		
 		// Get the same offset paths used for hit detection and highlighting
 		let pathsToConsolidate = layer.vectorPaths;
-		if (layer.offset && layer.offset > 0) {
+		if (layer.offset && layer.offset !== 0) {
 			const mmToPoints = 72 / 25.4;
 			const imageScale = layer.image?.naturalWidth ? layer.image.naturalWidth / layer.width : 1;
-			const offsetInImagePixels = layer.offset * mmToPoints * imageScale;
+			const offsetInImagePixels = layer.offset * mmToPoints * imageScale; // Preserve sign
 			
 			pathsToConsolidate = layer.vectorPaths.map(path => offsetVectorPath(path, offsetInImagePixels));
 		}

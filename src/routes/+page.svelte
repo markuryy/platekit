@@ -316,7 +316,7 @@
 											<input 
 												id="offset-slider"
 												type="range" 
-												min="0" 
+												min="-5" 
 												max="15" 
 												step="0.1"
 												value={selectedLayer.offset || 0}
