@@ -39,6 +39,7 @@
 	},
 	"type": "module",
 	"dependencies": {
-		"@techstark/opencv-js": "^4.11.0-release.1"
+		"@techstark/opencv-js": "^4.11.0-release.1",
+		"paper": "^0.12.18"
 	}
 }

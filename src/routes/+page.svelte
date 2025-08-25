@@ -110,6 +110,19 @@
 		handleLayerUpdate(layerId, { offset });
 	}
 
+	// Shape consolidation tool
+	let isShapeToolActive = $state(false);
+	let shapeSelectionBox = $state<{x: number, y: number, width: number, height: number} | null>(null);
+
+	function toggleShapeTool() {
+		isShapeToolActive = !isShapeToolActive;
+		if (!isShapeToolActive) {
+			shapeSelectionBox = null;
+		}
+	}
+
+
+
 </script>
 
 <div class="flex flex-col h-screen bg-background">
@@ -157,10 +170,12 @@
 				scale={canvasScale}
 				layers={layers}
 				selectedLayerIds={selectedLayerId ? [selectedLayerId] : []}
+				isShapeToolActive={isShapeToolActive}
 				onViewportScaleChange={handleViewportScaleChange}
 				onLayerAdd={handleLayerAdd}
 				onLayerUpdate={handleLayerUpdate}
 				onSelectionChange={handleSelectionChange}
+				onShapeSelection={() => {}}
 			/>
 		</main>
 
@@ -312,6 +327,29 @@
 												{(selectedLayer.offset || 0).toFixed(1)}mm
 											</div>
 										</div>
+									</div>
+
+									<!-- Shape Consolidation Tool -->
+									<div>
+										<h3 class="text-sm font-medium mb-2">Shape Tool</h3>
+										<div class="text-xs text-muted-foreground mb-2">
+											{selectedLayer.vectorPaths?.length || 0} contours in layer
+										</div>
+										<Button 
+											variant={isShapeToolActive ? "default" : "outline"} 
+											size="sm"
+											class="w-full"
+											disabled={!selectedLayer.vectorPaths || selectedLayer.vectorPaths.length < 2}
+											onclick={() => toggleShapeTool()}
+											title="Drag to select contours to consolidate"
+										>
+											{isShapeToolActive ? 'Exit Shape Tool' : 'Shape Tool'}
+										</Button>
+										{#if isShapeToolActive}
+											<div class="text-xs text-muted-foreground mt-2 text-center">
+												Drag across contours to unite them
+											</div>
+										{/if}
 									</div>
 								</div>
 							{/if}

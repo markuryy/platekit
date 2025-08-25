@@ -2,16 +2,19 @@
 	import { onMount } from 'svelte';
 	import type { Layer, SelectionState, VectorPath } from '$lib/types';
 	import { offsetVectorPath, reducePoints } from '$lib/tracing';
+	import { unite } from '$lib/pathfinder';
 
 	interface CanvasProps {
 		sheetSize?: 'us-letter' | 'a5';
 		scale?: number;
 		layers?: Layer[];
 		selectedLayerIds?: string[];
+		isShapeToolActive?: boolean;
 		onViewportScaleChange?: (scale: number) => void;
 		onLayerAdd?: (layer: Layer) => void;
 		onLayerUpdate?: (layerId: string, updates: Partial<Layer>) => void;
 		onSelectionChange?: (selectedIds: string[]) => void;
+		onShapeSelection?: (selectionBox: {x: number, y: number, width: number, height: number}) => void;
 	}
 
 	let {
@@ -19,10 +22,12 @@
 		scale = 1,
 		layers = [] as Layer[],
 		selectedLayerIds = [] as string[],
+		isShapeToolActive = false,
 		onViewportScaleChange,
 		onLayerAdd,
 		onLayerUpdate,
-		onSelectionChange
+		onSelectionChange,
+		onShapeSelection
 	}: CanvasProps = $props();
 
 	// Viewport state for pan and zoom
@@ -53,6 +58,11 @@
 	let isRotating = $state(false);
 	let rotationStartAngle = $state(0);
 	let layerStartTransform = $state({ x: 0, y: 0, width: 0, height: 0, rotation: 0 });
+
+	// Shape tool state
+	let isShapeBuilding = $state(false);
+	let shapeBuildPath = $state<{x: number, y: number}[]>([]);
+	let highlightedContours = $state<Set<number>>(new Set());
 
 	let canvasElement: HTMLCanvasElement;
 	let context: CanvasRenderingContext2D | null = null;
@@ -304,6 +314,68 @@
 			context.setLineDash([]);
 		}
 
+		// Draw shape builder path and highlights
+		if (isShapeToolActive && selectedLayerIds.length > 0) {
+			const selectedLayer = layers.find(l => l.id === selectedLayerIds[0]);
+			if (selectedLayer && selectedLayer.type === 'cut' && selectedLayer.vectorPaths) {
+				// Get the same offset paths used for hit detection
+				let pathsToRender = selectedLayer.vectorPaths;
+				if (selectedLayer.offset && selectedLayer.offset > 0) {
+					const mmToPoints = 72 / 25.4;
+					const imageScale = selectedLayer.image?.naturalWidth ? selectedLayer.image.naturalWidth / selectedLayer.width : 1;
+					const offsetInImagePixels = selectedLayer.offset * mmToPoints * imageScale;
+					
+					pathsToRender = selectedLayer.vectorPaths.map(path => offsetVectorPath(path, offsetInImagePixels));
+				}
+				
+				// Draw highlighted contours using the same coordinate system
+				pathsToRender.forEach((contour, index) => {
+					if (highlightedContours.has(index)) {
+						context.fillStyle = 'rgba(16, 185, 129, 0.3)';
+						context.strokeStyle = '#10b981';
+						context.lineWidth = 3;
+						
+						// Draw filled contour using the SAME coordinate conversion as hit detection
+						context.beginPath();
+						const renderedPoints = contour.points.map(point => ({
+							x: ((point.x / (selectedLayer.image?.naturalWidth || 1)) * selectedLayer.width + selectedLayer.x) * viewportScale,
+							y: ((point.y / (selectedLayer.image?.naturalHeight || 1)) * selectedLayer.height + selectedLayer.y) * viewportScale
+						}));
+						
+						if (renderedPoints.length > 0) {
+							context.moveTo(renderedPoints[0].x, renderedPoints[0].y);
+							for (let i = 1; i < renderedPoints.length; i++) {
+								context.lineTo(renderedPoints[i].x, renderedPoints[i].y);
+							}
+							if (contour.closed) context.closePath();
+						}
+						
+						context.fill();
+						context.stroke();
+					}
+				});
+			}
+		}
+
+		// Draw shape building path
+		if (shapeBuildPath.length > 1) {
+			context.strokeStyle = '#10b981';
+			context.lineWidth = 3;
+			context.lineCap = 'round';
+			context.lineJoin = 'round';
+			
+			context.beginPath();
+			const startPoint = shapeBuildPath[0];
+			context.moveTo(startPoint.x * viewportScale, startPoint.y * viewportScale);
+			
+			for (let i = 1; i < shapeBuildPath.length; i++) {
+				const point = shapeBuildPath[i];
+				context.lineTo(point.x * viewportScale, point.y * viewportScale);
+			}
+			
+			context.stroke();
+		}
+
 		// Restore context
 		context.restore();
 	}
@@ -348,6 +420,26 @@
 			// Add global listeners for drag operation
 			document.addEventListener('mousemove', handleGlobalMouseMove);
 			document.addEventListener('mouseup', handleGlobalMouseUp);
+			return;
+		}
+
+		// Handle shape tool
+		if (event.button === 0 && isShapeToolActive) {
+			const rect = canvasElement.getBoundingClientRect();
+			const mouseX = event.clientX - rect.left;
+			const mouseY = event.clientY - rect.top;
+			
+			// Convert to sheet coordinates
+			const sheetX = (mouseX - viewportX) / viewportScale;
+			const sheetY = (mouseY - viewportY) / viewportScale;
+			
+			isShapeBuilding = true;
+			shapeBuildPath = [{ x: sheetX, y: sheetY }];
+			highlightedContours = new Set();
+			
+			// Add global listeners for shape building
+			document.addEventListener('mousemove', handleShapeBuildMouseMove);
+			document.addEventListener('mouseup', handleShapeBuildMouseUp);
 			return;
 		}
 
@@ -725,6 +817,161 @@
 		// Remove global listeners
 		document.removeEventListener('mousemove', handleTransformMouseMove);
 		document.removeEventListener('mouseup', handleTransformMouseUp);
+	}
+
+	// Shape building handlers
+	function handleShapeBuildMouseMove(event: MouseEvent) {
+		if (!isShapeBuilding) return;
+		
+		const rect = canvasElement.getBoundingClientRect();
+		const mouseX = event.clientX - rect.left;
+		const mouseY = event.clientY - rect.top;
+		
+		// Convert to sheet coordinates
+		const sheetX = (mouseX - viewportX) / viewportScale;
+		const sheetY = (mouseY - viewportY) / viewportScale;
+		
+		// Add point to build path
+		shapeBuildPath = [...shapeBuildPath, { x: sheetX, y: sheetY }];
+		
+		// Check which contours the path intersects
+		updateHighlightedContours(sheetX, sheetY);
+		
+		drawSheet();
+	}
+
+	function handleShapeBuildMouseUp() {
+		if (isShapeBuilding && highlightedContours.size > 1 && onShapeSelection) {
+			// Convert highlighted contour indices to the selection format expected by consolidateSelectedShapes
+			consolidateHighlightedContours();
+		}
+		
+		isShapeBuilding = false;
+		shapeBuildPath = [];
+		highlightedContours = new Set();
+		
+		// Remove global listeners
+		document.removeEventListener('mousemove', handleShapeBuildMouseMove);
+		document.removeEventListener('mouseup', handleShapeBuildMouseUp);
+		
+		drawSheet();
+	}
+
+	// Check if a point is inside a contour using ray casting algorithm
+	function pointInContour(point: {x: number, y: number}, contour: VectorPath, layer: Layer): boolean {
+		if (contour.points.length < 3) return false;
+		
+		// Convert contour points to layer coordinates
+		const layerPoints = contour.points.map(p => ({
+			x: (p.x / (layer.image?.naturalWidth || 1)) * layer.width,
+			y: (p.y / (layer.image?.naturalHeight || 1)) * layer.height
+		}));
+		
+		let inside = false;
+		for (let i = 0, j = layerPoints.length - 1; i < layerPoints.length; j = i++) {
+			if (((layerPoints[i].y > point.y) !== (layerPoints[j].y > point.y)) &&
+				(point.x < (layerPoints[j].x - layerPoints[i].x) * (point.y - layerPoints[i].y) / (layerPoints[j].y - layerPoints[i].y) + layerPoints[i].x)) {
+				inside = !inside;
+			}
+		}
+		return inside;
+	}
+
+	function updateHighlightedContours(sheetX: number, sheetY: number) {
+		if (selectedLayerIds.length === 0) return;
+		
+		const layer = layers.find(l => l.id === selectedLayerIds[0]);
+		if (!layer || layer.type !== 'cut' || !layer.vectorPaths) return;
+		
+		// Get the actual paths being rendered (with offset applied if present)
+		let pathsToCheck = layer.vectorPaths;
+		if (layer.offset && layer.offset > 0) {
+			// Convert offset from mm to image pixels (same as rendering)
+			const mmToPoints = 72 / 25.4;
+			const imageScale = layer.image?.naturalWidth ? layer.image.naturalWidth / layer.width : 1;
+			const offsetInImagePixels = layer.offset * mmToPoints * imageScale;
+			
+			pathsToCheck = layer.vectorPaths.map(path => offsetVectorPath(path, offsetInImagePixels));
+		}
+		
+		console.log('Checking point:', { sheetX, sheetY });
+		console.log('Layer bounds:', { x: layer.x, y: layer.y, w: layer.width, h: layer.height });
+		console.log('Total contours:', pathsToCheck.length);
+		
+		// Check each contour using the same coordinate system as rendering
+		pathsToCheck.forEach((contour, index) => {
+			const isInside = pointInRenderedContour({ x: sheetX, y: sheetY }, contour, layer);
+			console.log(`Contour ${index}: ${isInside ? 'HIT' : 'miss'}`);
+			if (isInside) {
+				highlightedContours.add(index);
+			}
+		});
+		
+		console.log('Highlighted contours:', Array.from(highlightedContours));
+	}
+
+	// Check if a point is inside a contour using the same coordinate system as rendering
+	function pointInRenderedContour(point: {x: number, y: number}, contour: VectorPath, layer: Layer): boolean {
+		if (contour.points.length < 3) return false;
+		
+		// Convert contour points to screen coordinates (same as drawVectorPaths)
+		const renderedPoints = contour.points.map(p => ({
+			x: (p.x / (layer.image?.naturalWidth || 1)) * layer.width + layer.x,
+			y: (p.y / (layer.image?.naturalHeight || 1)) * layer.height + layer.y
+		}));
+		
+		// Ray casting algorithm
+		let inside = false;
+		for (let i = 0, j = renderedPoints.length - 1; i < renderedPoints.length; j = i++) {
+			if (((renderedPoints[i].y > point.y) !== (renderedPoints[j].y > point.y)) &&
+				(point.x < (renderedPoints[j].x - renderedPoints[i].x) * (point.y - renderedPoints[i].y) / (renderedPoints[j].y - renderedPoints[i].y) + renderedPoints[i].x)) {
+				inside = !inside;
+			}
+		}
+		return inside;
+	}
+
+	function consolidateHighlightedContours() {
+		if (!selectedLayerIds[0] || highlightedContours.size < 2) {
+			console.log('Not enough contours to consolidate:', highlightedContours.size);
+			return;
+		}
+		
+		const layer = layers.find(l => l.id === selectedLayerIds[0]);
+		if (!layer || layer.type !== 'cut' || !layer.vectorPaths) {
+			console.log('Invalid layer for consolidation');
+			return;
+		}
+		
+		console.log('Consolidating contours:', Array.from(highlightedContours));
+		
+		// Get the same offset paths used for hit detection and highlighting
+		let pathsToConsolidate = layer.vectorPaths;
+		if (layer.offset && layer.offset > 0) {
+			const mmToPoints = 72 / 25.4;
+			const imageScale = layer.image?.naturalWidth ? layer.image.naturalWidth / layer.width : 1;
+			const offsetInImagePixels = layer.offset * mmToPoints * imageScale;
+			
+			pathsToConsolidate = layer.vectorPaths.map(path => offsetVectorPath(path, offsetInImagePixels));
+		}
+		
+		// Get the highlighted contours (using offset paths)
+		const selectedContours = Array.from(highlightedContours).map(index => pathsToConsolidate[index]);
+		const remainingContours = pathsToConsolidate.filter((_, index) => !highlightedContours.has(index));
+		
+		try {
+			console.log('Uniting', selectedContours.length, 'contours');
+			const unitedContours = unite(selectedContours);
+			console.log('Unite result:', unitedContours.length, 'contours');
+			
+			const newContours = [...remainingContours, ...unitedContours];
+			console.log('Final contour count:', newContours.length);
+			
+			// Update the layer with the consolidated paths and reset offset since we've baked it in
+			onLayerUpdate?.(selectedLayerIds[0], { vectorPaths: newContours, offset: 0 });
+		} catch (error) {
+			console.error('Shape consolidation failed:', error);
+		}
 	}
 
 	// Drag and drop event handlers
