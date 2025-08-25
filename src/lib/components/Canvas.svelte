@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import type { Layer, SelectionState, VectorPath } from '$lib/types';
-	import { offsetVectorPath } from '$lib/tracing';
+	import { offsetVectorPath, reducePoints } from '$lib/tracing';
 
 	interface CanvasProps {
 		sheetSize?: 'us-letter' | 'a5';
@@ -210,9 +210,21 @@
 				context.drawImage(layer.image, 0, 0, layerWidth, layerHeight);
 			} else if (layer.type === 'cut' && layer.vectorPaths && layer.image) {
 				// Apply offset if specified and draw vector paths as dashed strokes
-				const pathsToRender = layer.offset && layer.offset > 0 
-					? layer.vectorPaths.map(path => offsetVectorPath(path, layer.offset!))
-					: layer.vectorPaths;
+				let pathsToRender = layer.vectorPaths;
+				if (layer.offset && layer.offset > 0) {
+					// Convert offset from mm to image pixels
+					// At 72 DPI: 1 mm = 72/25.4 ≈ 2.83465 points
+					// Scale to image resolution: points * (imageWidth / layerWidth)
+					const mmToPoints = 72 / 25.4; // Convert mm to points (1mm = ~2.83 points)
+					const imageScale = layer.image.naturalWidth / layer.width; // Scale factor from display to image pixels
+					const offsetInImagePixels = layer.offset * mmToPoints * imageScale;
+					
+					// Apply point reduction before offsetting for cleaner results
+					const reducedPaths = layer.vectorPaths.map(path => 
+						reducePoints(path, (layer.traceParameters?.pointReduction || 0.5) * imageScale)
+					);
+					pathsToRender = reducedPaths.map(path => offsetVectorPath(path, offsetInImagePixels));
+				}
 				drawVectorPaths(context, pathsToRender, layerWidth, layerHeight, layer.image.naturalWidth, layer.image.naturalHeight);
 			}
 			

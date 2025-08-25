@@ -12,6 +12,8 @@ export interface TraceParameters {
 	opticurve: boolean; // Enable curve optimization (default: true)
 	opttolerance: number; // Curve optimization tolerance (default: 0.2)
 	threshold: number; // Threshold for binarization (0-255, default: 128)
+	smoothing: number; // Additional smoothing factor (0-10, default: 2)
+	pointReduction: number; // Point reduction tolerance (0-5, default: 0.5)
 }
 
 export interface Layer {

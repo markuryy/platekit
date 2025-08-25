@@ -1,12 +1,41 @@
 import type { VectorPath, TraceParameters, Layer } from './types';
 import cvReadyPromise from '@techstark/opencv-js';
 
-let cv: any = null;
+// Basic OpenCV interface for the methods we use
+interface OpenCVMat {
+	delete(): void;
+	copyTo(dst: OpenCVMat): void;
+	data32S: Int32Array;
+}
+
+interface OpenCVMatVector {
+	size(): number;
+	get(index: number): OpenCVMat;
+	delete(): void;
+}
+
+interface OpenCV {
+	matFromImageData(imageData: ImageData): OpenCVMat;
+	split(src: OpenCVMat, dst: OpenCVMatVector): void;
+	threshold(src: OpenCVMat, dst: OpenCVMat, thresh: number, maxval: number, type: number): void;
+	findContours(image: OpenCVMat, contours: OpenCVMatVector, hierarchy: OpenCVMat, mode: number, method: number): void;
+	contourArea(contour: OpenCVMat): number;
+	approxPolyDP(curve: OpenCVMat, approxCurve: OpenCVMat, epsilon: number, closed: boolean): void;
+	matFromArray(rows: number, cols: number, type: number, array: Int32Array): OpenCVMat;
+	Mat: new () => OpenCVMat;
+	MatVector: new () => OpenCVMatVector;
+	THRESH_BINARY: number;
+	RETR_EXTERNAL: number;
+	CHAIN_APPROX_SIMPLE: number;
+	CV_32SC2: number;
+}
+
+let cv: OpenCV | null = null;
 
 // Initialize OpenCV when first needed
-async function getOpenCV() {
+async function getOpenCV(): Promise<OpenCV> {
 	if (!cv) {
-		cv = await cvReadyPromise;
+		cv = await cvReadyPromise as OpenCV;
 	}
 	return cv;
 }
@@ -18,7 +47,9 @@ export const DEFAULT_TRACE_PARAMETERS: TraceParameters = {
 	alphamax: 1, // Not used in alpha tracing
 	opticurve: true, // Enable curve smoothing
 	opttolerance: 2.0, // Curve smoothing tolerance
-	threshold: 128 // Alpha threshold (0-255)
+	threshold: 128, // Alpha threshold (0-255)
+	smoothing: 2.0, // Additional smoothing factor
+	pointReduction: 0.5 // Point reduction tolerance
 };
 
 /**
@@ -40,7 +71,7 @@ function imageToImageData(image: HTMLImageElement): ImageData {
 /**
  * Convert OpenCV contour points to our VectorPath format
  */
-function contourToVectorPath(contour: any, id: string): VectorPath {
+function contourToVectorPath(contour: OpenCVMat, id: string): VectorPath {
 	const points: { x: number; y: number }[] = [];
 	
 	// Extract points from OpenCV contour
@@ -162,87 +193,258 @@ async function smoothContours(vectorPaths: VectorPath[], tolerance: number): Pro
 }
 
 /**
- * Offset a vector path outward by a given distance (for vinyl cutting gaps)
- * Uses improved parallel offset algorithm with proper winding detection
+ * Reduce points by removing duplicates and points that are very close together
  */
-export function offsetVectorPath(path: VectorPath, offsetDistance: number): VectorPath {
-	if (path.points.length < 3 || offsetDistance === 0) {
-		return path; // Can't offset with less than 3 points or zero distance
+export function reducePoints(path: VectorPath, tolerance: number = 0.5): VectorPath {
+	if (path.points.length <= 2) {
+		return path;
 	}
-
-	const offsetPoints: { x: number; y: number }[] = [];
+	
+	const reducedPoints: { x: number; y: number }[] = [];
 	const points = path.points;
 	
-	// Determine if path is clockwise or counterclockwise using signed area
-	let signedArea = 0;
-	for (let i = 0; i < points.length; i++) {
-		const curr = points[i];
-		const next = points[(i + 1) % points.length];
-		signedArea += (next.x - curr.x) * (next.y + curr.y);
+	// Always keep the first point
+	reducedPoints.push(points[0]);
+	
+	for (let i = 1; i < points.length; i++) {
+		const current = points[i];
+		const previous = reducedPoints[reducedPoints.length - 1];
+		
+		// Calculate distance between current and previous kept point
+		const dx = current.x - previous.x;
+		const dy = current.y - previous.y;
+		const distance = Math.sqrt(dx * dx + dy * dy);
+		
+		// Only keep the point if it's far enough from the previous kept point
+		if (distance >= tolerance) {
+			reducedPoints.push(current);
+		}
 	}
 	
-	// If positive, clockwise; if negative, counterclockwise
-	const isClockwise = signedArea > 0;
-	// For outward offset: invert direction for clockwise paths
-	const offsetMultiplier = isClockwise ? -1 : 1;
+	// For closed paths, check if the last point is too close to the first
+	if (path.closed && reducedPoints.length > 2) {
+		const first = reducedPoints[0];
+		const last = reducedPoints[reducedPoints.length - 1];
+		const dx = last.x - first.x;
+		const dy = last.y - first.y;
+		const distance = Math.sqrt(dx * dx + dy * dy);
+		
+		// Remove the last point if it's too close to the first
+		if (distance < tolerance) {
+			reducedPoints.pop();
+		}
+	}
 	
-	for (let i = 0; i < points.length; i++) {
-		const prevIndex = (i - 1 + points.length) % points.length;
-		const nextIndex = (i + 1) % points.length;
-		
-		const prev = points[prevIndex];
-		const curr = points[i];
-		const next = points[nextIndex];
-		
-		// Calculate vectors for adjacent segments
-		const v1 = { x: curr.x - prev.x, y: curr.y - prev.y };
-		const v2 = { x: next.x - curr.x, y: next.y - curr.y };
-		
-		// Normalize vectors
-		const len1 = Math.sqrt(v1.x * v1.x + v1.y * v1.y);
-		const len2 = Math.sqrt(v2.x * v2.x + v2.y * v2.y);
-		
-		if (len1 > 0) {
-			v1.x /= len1;
-			v1.y /= len1;
-		}
-		
-		if (len2 > 0) {
-			v2.x /= len2;
-			v2.y /= len2;
-		}
-		
-		// Calculate perpendicular vectors (normals)
-		const n1 = { x: -v1.y * offsetMultiplier, y: v1.x * offsetMultiplier };
-		const n2 = { x: -v2.y * offsetMultiplier, y: v2.x * offsetMultiplier };
-		
-		// Average the normals to get the offset direction
-		let offsetDir = { x: (n1.x + n2.x) / 2, y: (n1.y + n2.y) / 2 };
-		
-		// Normalize the offset direction
-		const offsetLen = Math.sqrt(offsetDir.x * offsetDir.x + offsetDir.y * offsetDir.y);
-		if (offsetLen > 0) {
-			offsetDir.x /= offsetLen;
-			offsetDir.y /= offsetLen;
-		}
-		
-		// Calculate the actual offset distance (compensate for angle)
-		const dotProduct = n1.x * n2.x + n1.y * n2.y;
-		const angle = Math.acos(Math.max(-1, Math.min(1, dotProduct)));
-		const compensation = Math.sin(angle / 2);
-		const actualOffset = compensation > 0.1 ? offsetDistance / compensation : offsetDistance;
-		
-		// Apply offset
-		offsetPoints.push({
-			x: curr.x + offsetDir.x * actualOffset,
-			y: curr.y + offsetDir.y * actualOffset
-		});
+	// Ensure we have at least 3 points for a valid path
+	if (reducedPoints.length < 3) {
+		return path; // Return original if reduction would make it invalid
 	}
 	
 	return {
 		...path,
-		points: offsetPoints
+		points: reducedPoints
 	};
+}
+
+/**
+ * Offset a vector path outward by a given distance using smooth arc joins
+ * Creates die-cut style outlines similar to Illustrator's Offset Path tool
+ */
+export function offsetVectorPath(path: VectorPath, offsetDistance: number): VectorPath {
+	if (path.points.length < 3 || offsetDistance === 0) {
+		return path;
+	}
+
+	const points = path.points;
+	
+	// Determine winding direction using shoelace formula
+	let signedArea = 0;
+	for (let i = 0; i < points.length; i++) {
+		const j = (i + 1) % points.length;
+		signedArea += (points[j].x - points[i].x) * (points[j].y + points[i].y);
+	}
+	
+	// In screen coordinates, positive area = clockwise, negative = counterclockwise
+	// For outward offset: clockwise needs positive offset, counterclockwise needs negative
+	const isClockwise = signedArea > 0;
+	const direction = isClockwise ? 1 : -1;
+	
+	// Generate offset segments for each edge
+	const offsetSegments: { start: { x: number; y: number }; end: { x: number; y: number } }[] = [];
+	
+	for (let i = 0; i < points.length; i++) {
+		const current = points[i];
+		const next = points[(i + 1) % points.length];
+		
+		// Calculate edge vector
+		const edge = { x: next.x - current.x, y: next.y - current.y };
+		const edgeLen = Math.sqrt(edge.x * edge.x + edge.y * edge.y);
+		
+		if (edgeLen < 1e-6) continue; // Skip degenerate edges
+		
+		// Normalize edge vector
+		const unit = { x: edge.x / edgeLen, y: edge.y / edgeLen };
+		
+		// Calculate normal (perpendicular) vector pointing outward
+		const normal = { x: -unit.y * direction, y: unit.x * direction };
+		
+		// Create offset segment
+		offsetSegments.push({
+			start: {
+				x: current.x + normal.x * offsetDistance,
+				y: current.y + normal.y * offsetDistance
+			},
+			end: {
+				x: next.x + normal.x * offsetDistance,
+				y: next.y + normal.y * offsetDistance
+			}
+		});
+	}
+	
+	if (offsetSegments.length === 0) return path;
+	
+	// Connect offset segments with smooth joins
+	const offsetPoints: { x: number; y: number }[] = [];
+	
+	for (let i = 0; i < offsetSegments.length; i++) {
+		const currentSeg = offsetSegments[i];
+		const nextSeg = offsetSegments[(i + 1) % offsetSegments.length];
+		
+		// Add the start point of the current segment
+		offsetPoints.push(currentSeg.start);
+		
+		// Calculate intersection of current and next segments
+		const intersection = lineIntersection(
+			currentSeg.start, currentSeg.end,
+			nextSeg.start, nextSeg.end
+		);
+		
+		if (intersection) {
+			// Check if intersection is reasonable (not too far from original vertices)
+			const originalVertex = points[(i + 1) % points.length];
+			const distToOriginal = Math.sqrt(
+				Math.pow(intersection.x - originalVertex.x, 2) + 
+				Math.pow(intersection.y - originalVertex.y, 2)
+			);
+			
+			// Use intersection if it's reasonable, otherwise use arc join
+			const maxDistance = offsetDistance * 3; // Reasonable limit
+			if (distToOriginal <= maxDistance) {
+				offsetPoints.push(intersection);
+			} else {
+				// Use arc join for sharp corners
+				const arcPoints = createArcJoin(
+					currentSeg.end, nextSeg.start,
+					points[(i + 1) % points.length],
+					offsetDistance
+				);
+				offsetPoints.push(...arcPoints);
+			}
+		} else {
+			// Segments are parallel or don't intersect, connect with arc
+			const arcPoints = createArcJoin(
+				currentSeg.end, nextSeg.start,
+				points[(i + 1) % points.length],
+				offsetDistance
+			);
+			offsetPoints.push(...arcPoints);
+		}
+	}
+	
+	// Apply smoothing to reduce sharp angles
+	const smoothedPoints = smoothOffsetPath(offsetPoints, offsetDistance * 0.1);
+	
+	return {
+		...path,
+		points: smoothedPoints
+	};
+}
+
+/**
+ * Find intersection point of two lines defined by two points each
+ */
+function lineIntersection(
+	p1: { x: number; y: number }, p2: { x: number; y: number },
+	p3: { x: number; y: number }, p4: { x: number; y: number }
+): { x: number; y: number } | null {
+	const denom = (p1.x - p2.x) * (p3.y - p4.y) - (p1.y - p2.y) * (p3.x - p4.x);
+	
+	if (Math.abs(denom) < 1e-10) {
+		return null; // Lines are parallel
+	}
+	
+	const t = ((p1.x - p3.x) * (p3.y - p4.y) - (p1.y - p3.y) * (p3.x - p4.x)) / denom;
+	
+	return {
+		x: p1.x + t * (p2.x - p1.x),
+		y: p1.y + t * (p2.y - p1.y)
+	};
+}
+
+/**
+ * Create smooth arc join between two offset segments
+ */
+function createArcJoin(
+	end1: { x: number; y: number },
+	start2: { x: number; y: number },
+	center: { x: number; y: number },
+	radius: number
+): { x: number; y: number }[] {
+	// Calculate angles from center to the two points
+	const angle1 = Math.atan2(end1.y - center.y, end1.x - center.x);
+	const angle2 = Math.atan2(start2.y - center.y, start2.x - center.x);
+	
+	let deltaAngle = angle2 - angle1;
+	
+	// Ensure we take the shorter arc
+	if (deltaAngle > Math.PI) {
+		deltaAngle -= 2 * Math.PI;
+	} else if (deltaAngle < -Math.PI) {
+		deltaAngle += 2 * Math.PI;
+	}
+	
+	// Only create arc points if the angle is significant
+	if (Math.abs(deltaAngle) < 0.1) {
+		return [end1]; // Too small, just use the point
+	}
+	
+	const arcPoints: { x: number; y: number }[] = [];
+	const steps = Math.max(2, Math.ceil(Math.abs(deltaAngle) * 3)); // More steps for larger angles
+	
+	for (let i = 1; i < steps; i++) {
+		const t = i / steps;
+		const angle = angle1 + deltaAngle * t;
+		arcPoints.push({
+			x: center.x + Math.cos(angle) * radius,
+			y: center.y + Math.sin(angle) * radius
+		});
+	}
+	
+	return arcPoints;
+}
+
+/**
+ * Apply smoothing to offset path to reduce jagged edges
+ */
+function smoothOffsetPath(points: { x: number; y: number }[], _tolerance: number): { x: number; y: number }[] {
+	if (points.length < 3) return points;
+	
+	const smoothed: { x: number; y: number }[] = [];
+	const smoothingFactor = 0.3; // How much to smooth (0 = no smoothing, 1 = maximum)
+	
+	for (let i = 0; i < points.length; i++) {
+		const prev = points[(i - 1 + points.length) % points.length];
+		const current = points[i];
+		const next = points[(i + 1) % points.length];
+		
+		// Apply weighted averaging for smoothing
+		const smoothedX = current.x + (prev.x + next.x - 2 * current.x) * smoothingFactor * 0.5;
+		const smoothedY = current.y + (prev.y + next.y - 2 * current.y) * smoothingFactor * 0.5;
+		
+		smoothed.push({ x: smoothedX, y: smoothedY });
+	}
+	
+	return smoothed;
 }
 
 
@@ -263,9 +465,19 @@ export async function traceImage(
 		// Find contours using OpenCV
 		let contours = await findContours(imageData, params.turdsize);
 		
-		// Apply smoothing if enabled
+		// Apply initial smoothing if enabled
 		if (params.opticurve && params.opttolerance > 0) {
 			contours = await smoothContours(contours, params.opttolerance);
+		}
+		
+		// Apply additional smoothing if specified
+		if (params.smoothing > 0) {
+			contours = await smoothContours(contours, params.smoothing);
+		}
+		
+		// Apply point reduction to remove very close points
+		if (params.pointReduction > 0) {
+			contours = contours.map(path => reducePoints(path, params.pointReduction));
 		}
 		
 		return contours;
@@ -292,7 +504,7 @@ export async function createCutLayerFromPrint(printLayer: Layer): Promise<Layer>
 		name: `${printLayer.name} (Cut)`,
 		type: 'cut',
 		vectorPaths,
-		traceParameters: printLayer.traceParameters || DEFAULT_TRACE_PARAMETERS,
+		traceParameters: { ...DEFAULT_TRACE_PARAMETERS, ...printLayer.traceParameters },
 		zIndex: printLayer.zIndex + 0.1 // Place slightly above the original
 	};
 	

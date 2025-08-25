@@ -109,6 +109,7 @@
 	function handleOffsetChange(layerId: string, offset: number) {
 		handleLayerUpdate(layerId, { offset });
 	}
+
 </script>
 
 <div class="flex flex-col h-screen bg-background">
@@ -301,7 +302,7 @@
 												id="offset-slider"
 												type="range" 
 												min="0" 
-												max="5" 
+												max="15" 
 												step="0.1"
 												value={selectedLayer.offset || 0}
 												class="w-full"
