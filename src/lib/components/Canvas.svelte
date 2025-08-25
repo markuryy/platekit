@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import type { Layer, SelectionState } from '$lib/types';
+	import type { Layer, SelectionState, VectorPath } from '$lib/types';
+	import { offsetVectorPath } from '$lib/tracing';
 
 	interface CanvasProps {
 		sheetSize?: 'us-letter' | 'a5';
@@ -65,6 +66,50 @@
 	const sheetDimensions = $derived(SHEET_DIMENSIONS[sheetSize]);
 	const scaledWidth = $derived(sheetDimensions.width * viewportScale);
 	const scaledHeight = $derived(sheetDimensions.height * viewportScale);
+
+	/**
+	 * Draw vector paths as dashed strokes
+	 * Now uses direct coordinate mapping from image coordinates to layer dimensions
+	 */
+	function drawVectorPaths(context: CanvasRenderingContext2D, vectorPaths: VectorPath[], layerWidth: number, layerHeight: number, imageWidth: number, imageHeight: number) {
+		// Set up stroke style for cut lines
+		context.strokeStyle = '#ef4444'; // Red color for cut lines
+		context.lineWidth = 2;
+		context.setLineDash([5, 5]); // Dashed line
+		context.lineCap = 'round';
+		context.lineJoin = 'round';
+		
+		vectorPaths.forEach(path => {
+			if (path.points.length < 2) return;
+			
+			context.beginPath();
+			
+			// Scale points directly from image coordinates to layer dimensions
+			// This maintains the proper alignment with the image
+			const scaledPoints = path.points.map(point => ({
+				x: (point.x / imageWidth) * layerWidth,
+				y: (point.y / imageHeight) * layerHeight
+			}));
+			
+			// Move to first point
+			context.moveTo(scaledPoints[0].x, scaledPoints[0].y);
+			
+			// Draw lines to subsequent points
+			for (let i = 1; i < scaledPoints.length; i++) {
+				context.lineTo(scaledPoints[i].x, scaledPoints[i].y);
+			}
+			
+			// Close path if specified
+			if (path.closed) {
+				context.closePath();
+			}
+			
+			context.stroke();
+		});
+		
+		// Reset line dash
+		context.setLineDash([]);
+	}
 
 	function initializeCanvas() {
 		if (!canvasElement) return;
@@ -138,7 +183,7 @@
 		// Draw layers (sorted by zIndex)
 		const sortedLayers = [...layers].sort((a, b) => a.zIndex - b.zIndex);
 		sortedLayers.forEach(layer => {
-			if (!layer.visible || !layer.image || !context) return;
+			if (!layer.visible || !context) return;
 			
 			const layerX = layer.x * viewportScale;
 			const layerY = layer.y * viewportScale;
@@ -160,7 +205,16 @@
 			context.scale(layer.scaleX, layer.scaleY);
 			context.translate(-layerWidth / 2, -layerHeight / 2);
 			
-			context.drawImage(layer.image, 0, 0, layerWidth, layerHeight);
+			if (layer.type === 'print' && layer.image) {
+				// Draw raster image
+				context.drawImage(layer.image, 0, 0, layerWidth, layerHeight);
+			} else if (layer.type === 'cut' && layer.vectorPaths && layer.image) {
+				// Apply offset if specified and draw vector paths as dashed strokes
+				const pathsToRender = layer.offset && layer.offset > 0 
+					? layer.vectorPaths.map(path => offsetVectorPath(path, layer.offset!))
+					: layer.vectorPaths;
+				drawVectorPaths(context, pathsToRender, layerWidth, layerHeight, layer.image.naturalWidth, layer.image.naturalHeight);
+			}
 			
 			context.restore();
 		});

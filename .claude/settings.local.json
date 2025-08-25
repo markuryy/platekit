@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(bun x shadcn-svelte@latest add:*)"
+      "Bash(bun x shadcn-svelte@latest add:*)",
+      "WebFetch(domain:www.npmjs.com)",
+      "WebFetch(domain:github.com)"
     ],
     "deny": [],
     "ask": []
