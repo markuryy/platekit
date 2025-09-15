@@ -2,6 +2,8 @@
 
 Vinyl sticker sheet layout tool for the browser.
 
+<img width="1920" height="1280" alt="991shots_so" src="https://github.com/user-attachments/assets/ec0650b6-97e3-4660-8cee-36a45d36341f" />
+
 ## Features
 
 Drop images onto canvas. Position and scale them. Generate vector cut paths from images. Export to PDF for printing or SVG for vinyl plotters.
